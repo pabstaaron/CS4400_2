@@ -17,7 +17,7 @@
 static void check_for_shared_object(Elf64_Ehdr *ehdr);
 static void fail(char *reason, int err_code);
 
-void getVars(void* func);
+void getVars(void* func, Elf64_Ehdr* ehdr);
 
 // Returns a pointer to the section header of the given section name.
 Elf64_Shdr* getSectionByName(Elf64_Ehdr* ehdr, char* name){
@@ -85,7 +85,7 @@ int parseFunctions(Elf64_Ehdr* ehdr, char*** funcNames){
 	long offset = syms[i].st_value - text_hdr->sh_addr; // Offset into elf file
 	void* func = text + offset; // The location of this function's machine code
 
-	getVars(func);
+	getVars(func, ehdr);
 	
 	numFuncs++;
       }
@@ -99,9 +99,14 @@ int parseFunctions(Elf64_Ehdr* ehdr, char*** funcNames){
 /*
  * Determines what, if any, global variables are used by a function.
  */
-void getVars(void* func){
+void getVars(void* func, Elf64_Ehdr* ehdr){
   char* currByte = (char*)func;
   short mov = 0; // State variable for parsing movq instructions
+
+  Elf64_Shdr* reladyn_hdr = getSectionByName(ehdr, ".rela.dyn");
+
+  // Contains r_offset, r_info, and r_append fields.
+  Elf64_Rela* reladyn = AT_SEC(ehdr, reladyn_hdr);
   
   while(1){
     printf("%x\n", *currByte);
