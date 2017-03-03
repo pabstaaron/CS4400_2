@@ -19,13 +19,32 @@ static void fail(char *reason, int err_code);
 
 void getVars(void* func, Elf64_Ehdr* ehdr);
 
+/*
+int strcmp(const char* a, const char* b){
+  int i = 0;
+  printf("Entered function!");
+  
+  while(a[i] != 0 && b[0] != 0){
+    if(a[i] != b[1])
+      return 1;
+    printf("%d\n", i);
+    i++;
+  }
+
+  if((a[i] != 0 && b[i] == 0) || (a[i] == 0 && b[i] != 0))
+    return 1;
+  else
+    return 0;
+}
+*/
+
 // Returns a pointer to the section header of the given section name.
 Elf64_Shdr* getSectionByName(Elf64_Ehdr* ehdr, char* name){
   Elf64_Shdr *shdrs = (void*)ehdr + ehdr->e_shoff; // Gets the position of section header information.
 
   // Get the location of the string table, which will contain the human-readable section names.
   char* strs = (void*)ehdr+shdrs[ehdr->e_shstrndx].sh_offset;
-  
+  // printf("getsecbyname");
   // Loop through all of the section headers
   for(int i = 0; i < ehdr->e_shnum; i++){
   
@@ -85,6 +104,7 @@ int parseFunctions(Elf64_Ehdr* ehdr, char*** funcNames){
 	long offset = syms[i].st_value - text_hdr->sh_addr; // Offset into elf file
 	void* func = text + offset; // The location of this function's machine code
 
+	printf("%s\n", name);
 	getVars(func, ehdr);
 	
 	numFuncs++;
@@ -105,81 +125,83 @@ void getVars(void* func, Elf64_Ehdr* ehdr){
 
   Elf64_Shdr* reladyn_hdr = getSectionByName(ehdr, ".rela.dyn");
 
+  int count = reladyn_hdr->sh_size / sizeof(Elf64_Rela);
+  //printf("%d\n", count);
+  
   // Contains r_offset, r_info, and r_append fields.
   Elf64_Rela* reladyn = AT_SEC(ehdr, reladyn_hdr);
+
+  Elf64_Shdr* dyn_hdr = getSectionByName(ehdr, ".dynsym");
+  Elf64_Sym* sym = AT_SEC(ehdr, dyn_hdr);
+  
+  // Get the location of the string table, which will contain the function names
+  char *strs = AT_SEC(ehdr, getSectionByName(ehdr, ".dynstr"));
   
   while(1){
-    printf("%x\n", *currByte);
+    //printf("%x\n", *currByte);
     
-    // If we've hit a mov instruction
-    if(*currByte == (char)0x48){
+    if(*currByte == (char)0x48){ // mov
       currByte++;
       
-      if(*currByte == (char)0x63){
-	currByte++;
-        if(*currByte&((char)192) == (char)192){ // If the top two reg bits are set. move from one reg to another.
-	  printf("Reg mov!\n");
-	}
-      }
-      else if(*currByte == (char)0x89){
-	currByte++;
-        if(*currByte&((char)192) == (char)192){ // If the top two reg bits are set. move from one reg to another.
-	  printf("Reg mov!\n");
-	}
-      }
-      else if(*currByte == (char)0x8b){ 
-	// Next, get the reg variable.
-	currByte++;
+      if(*currByte == (char)0x8b){
+	currByte++; // Now will be the reg flag
 
-	if(*currByte == (char)5){ // PC-relative
-	  printf("PC-Relative!\n");
-	  int pcOff = 0;
-	  int mask = 15;
+	int top = *currByte >> 6;
+	int bottom = *currByte & (char)7;
 
-	  // Parse out the pc offset
+	if(top == 0 && bottom == 5){ // If this is a PC-relative mov
+	  //printf("PC relative!\n");
+
+	  // Collect the next four bytes, which will be the PC-relative offset
+	  unsigned int pcOff = 0;
+
+	  /*
 	  for(int i = 0; i < 4; i++){
 	    currByte++;
-	    pcOff = pcOff | (*currByte&mask);
+	    pcOff = pcOff | (int)(*currByte);
+	    printf("%x\t%x\n", *currByte, pcOff);
 	    if(i != 3)
-	      pcOff << 4;
+	      pcOff <<= 8;
+	    //printf("%x\t%x\n", *currByte, pcOff);
 	  }
+	  */
 
-	  // We need to now use this pcoff to calculate the location of the glbl var that was likely just used
-	}
-	else if(*currByte&((char)192) == (char)192){ // If the top two reg bits are set. move from one reg to another.
-	  printf("Reg mov!\n");
-	}
-        
-      }	
-	
-    }
-    else if(*currByte == (char)0x63 || *currByte == (char)0x89 || *currByte == (char)0x8b){ // mov w/o x48 prefix
-      printf("Mov w/o x48!\n");
-      currByte++;
-
-      if(*currByte == (char)5){ // PC-relative
-	  printf("PC-Relative!\n");
-	  int pcOff = 0;
-	  int mask = 15;
-
-	  // Parse out the pc offset
 	  for(int i = 0; i < 4; i++){
 	    currByte++;
-	    pcOff = pcOff | (*currByte&mask);
+	    unsigned int temp = (int)(*currByte);
+	    temp <<= 24;
+	    pcOff = pcOff | temp;
+	    //printf("%x\t%x\n", *currByte, pcOff);
 	    if(i != 3)
-	      pcOff << 4;
+	      pcOff >>= 8;
+	    //printf("%x\t%x\n", *currByte, pcOff);
 	  }
+	  
+	  //printf("%x\n", pcOff);
 
-	  // We need to now use this pcoff to calculate the location of the glbl var that was likely just used
+	  // Need to use this info to compute actual offset
+	  pcOff += (long)currByte - (long)ehdr + 1;
+	  //printf("%x\n", pcOff);
+	  
+	  //printf("Offset\n");
+	  for(int i = 0; i < count; i++){
+	    if(reladyn[i].r_offset == pcOff){
+	      //printf("Found it!!\n");
+	    
+	      //printf("%x\n", ELF64_R_SYM(reladyn[i].r_info)); // print the index into the symbol table
+
+	      Elf64_Sym entry = sym[ELF64_R_SYM(reladyn[i].r_info)]; // The entry for this var
+	      char* name = strs + entry.st_name;
+	      printf("  %s\n", name);
+	    }
+	  }
 	}
-      else{
-	printf("reg mov!\n");
       }
     }
-    else if(*currByte == (char)0xc3) // If we've hit a ret instr
+    else if(*currByte == (char)0xc3){ // ret
       break;
-    
-    
+    }
+
     currByte++;
   }
 }
@@ -237,8 +259,8 @@ int main(int argc, char **argv) {
   /* Add a call to your work here */
   char** funcNames;
   int count = parseFunctions(ehdr, &funcNames);
-  for(int i = 0; i < count; i++)
-    printf(" %s\n", funcNames[i]);
+  //for(int i = 0; i < count; i++)
+  //printf("%s\n", funcNames[i]);
 
   //printGlbVars(ehdr);
   
