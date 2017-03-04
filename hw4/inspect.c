@@ -193,12 +193,13 @@ void getVars(void* func, Elf64_Ehdr* ehdr){
 	      Elf64_Sym entry = sym[ELF64_R_SYM(reladyn[i].r_info)]; // The entry for this var
 	      char* name = strs + entry.st_name;
 	      printf("  %s\n", name);
+	      break;
 	    }
 	  }
 	}
       }
     }
-    else if(*currByte == (char)0xc3){ // ret
+    else if(*currByte == (char)0xc3 || *currByte == (char)0xe9 || *currByte == (char)0xeb){ // ret
       break;
     }
 
